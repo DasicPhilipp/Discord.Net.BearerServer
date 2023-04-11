@@ -1,27 +1,36 @@
 using Discord.Net.BearerServer;
+using Discord.Net.BearerServer.Configuration;
 using Microsoft.AspNetCore.SignalR;
 using System.Net;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 builder.Services.AddSignalR();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+
+Config.SetUp(builder.Configuration
+    .AddJsonFile("appsettings.json", false, true)
+    .Build());
 
 WebApplication app = builder.Build();
 
+if (app.Environment.IsDevelopment())
+{
+    app.UseDeveloperExceptionPage();
+}
+
 HttpClient httpClient = new HttpClient();
 
-app.MapHub<AuthHub>("/bearer/discord");
-app.MapGet("/connections/discord", async context =>
+app.MapHub<AuthHub>(Config.Uris.AuthHabRoute);
+app.MapGet(Config.Uris.CodePageRoute, async context =>
 {
     string? code = context.Request.Query["code"];
     if (string.IsNullOrEmpty(code))
     {
         context.Response.StatusCode = (int)HttpStatusCode.BadRequest;
-        await context.Response.WriteAsync("400: Bad Request (the code is missing)");
+        await context.Response.WriteAsync(Config.Messages.CodeIsMissing);
         return;
     }
-
+    
     HttpRequestMessage request = new HttpRequestMessage
     {
         Method = HttpMethod.Post,
@@ -32,18 +41,18 @@ app.MapGet("/connections/discord", async context =>
         },
         Content = new FormUrlEncodedContent(new Dictionary<string, string>
         {
-            { "client_id", "***REMOVED***" },
-            { "client_secret", "***REMOVED***" },
+            { "client_id", Config.Secrets.ClientId },
+            { "client_secret", Config.Secrets.ClientSecret },
             { "grant_type", "authorization_code" },
             { "code", code },
-            { "redirect_uri", "https://localhost:44327/connections/discord" }
+            { "redirect_uri", $"{Config.Uris.ApplicationUrl}{Config.Uris.CodePageRoute}" }
         })
     };
 
     HttpResponseMessage message = await httpClient.SendAsync(request);
     if (!message.IsSuccessStatusCode)
     {
-        await context.Response.WriteAsync("400: Bad Request");
+        await context.Response.WriteAsync(Config.Messages.OnFailingRequest);
         return;
     }
 
@@ -53,7 +62,7 @@ app.MapGet("/connections/discord", async context =>
     await hubContext.Clients.All.SendAsync("ReceiveBearerToken", jsonResponse);
 
     context.Response.StatusCode = (int)HttpStatusCode.OK;
-    context.Response.Redirect("https://discord.com");
+    context.Response.Redirect(Config.Uris.RedirectLocationOnSuccess);
 });
 
-app.Run();
+app.Run(Config.Uris.ApplicationUrl);
